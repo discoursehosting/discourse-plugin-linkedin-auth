@@ -1,8 +1,8 @@
-# name: discourse-plugin-linkedin-auth
-# about: Enable Login via LinkedIn
-# version: 0.0.2
-# authors: Matthew Wilkin
-# url: https://github.com/cpradio/discourse-plugin-linkedin-auth
+# name: discourse-plugin-linkedin-auth-customfields
+# about: Enable Login via LinkedIn and copy some fields
+# version: 0.0.3
+# authors: Matthew Wilkin and DiscourseHosting.com
+# url: https://github.com/discoursehosting/discourse-plugin-linkedin-auth-customfields
 
 require 'auth/oauth2_authenticator'
 
@@ -19,7 +19,6 @@ class LinkedInAuthenticator < ::Auth::OAuth2Authenticator
 
   def after_authenticate(auth_token)
     result = super
-
     if result.user && result.email && (result.user.email != result.email)
       begin
         result.user.primary_email.update!(email: result.email)
@@ -29,6 +28,48 @@ class LinkedInAuthenticator < ::Auth::OAuth2Authenticator
       end
     end
 
+    result.extra_data = {
+      uid: auth_token[:uid],
+      provider: auth_token[:provider],
+      profile: auth_token['info']['urls']['public_profile'],
+      location: auth_token['info']['location']['name'],
+      title: auth_token['info']['description']
+    }
+
+    add_information(result.user, result.extra_data)
+
+    result
+  end
+
+  def add_information(user, data)
+    if user
+      begin
+        dirty = false
+        field_no = UserField.where(name: "LinkedIn Profile").pluck('id').first
+        if field_no
+          user.custom_fields["user_field_#{field_no}"] = data[:profile]
+          dirty = true
+        end
+        field_no = UserField.where(name: "Location").pluck('id').first
+        if field_no
+          user.custom_fields["user_field_#{field_no}"] = data[:location]
+          dirty = true
+        end
+        field_no = UserField.where(name: "Title").pluck('id').first
+        if field_no
+          user.custom_fields["user_field_#{field_no}"] = data[:title]
+          dirty = true
+        end
+        user.save_custom_fields if dirty
+      rescue => ex
+        Rails.logger.warn("FAILED to set custom fields for #{user.username}")
+      end
+    end
+  end
+
+  def after_create_account(user, auth)
+    result = super
+    add_information(user, auth[:extra_data])
     result
   end
 
